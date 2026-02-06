@@ -29,7 +29,6 @@ class GeminiLiveService: ObservableObject {
   init() {
     let config = URLSessionConfiguration.default
     config.timeoutIntervalForRequest = 30
-    // Create session with delegate to monitor WebSocket lifecycle
     self.urlSession = URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
   }
 
@@ -39,22 +38,13 @@ class GeminiLiveService: ObservableObject {
       return false
     }
 
-    #if DEBUG
-    NSLog("[GeminiLive] Connecting to: \(url.host ?? "unknown")...")
-    #endif
-
     connectionState = .connecting
 
-    // Wait for WebSocket open, then send setup, then wait for setupComplete
     let result = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
       self.connectContinuation = continuation
 
-      // Set up delegate callbacks
       self.delegate.onOpen = { [weak self] protocol_ in
         guard let self else { return }
-        #if DEBUG
-        NSLog("[GeminiLive] WebSocket opened (protocol: \(protocol_ ?? "none"))")
-        #endif
         Task { @MainActor in
           self.connectionState = .settingUp
           self.sendSetupMessage()
@@ -65,9 +55,6 @@ class GeminiLiveService: ObservableObject {
       self.delegate.onClose = { [weak self] code, reason in
         guard let self else { return }
         let reasonStr = reason.flatMap { String(data: $0, encoding: .utf8) } ?? "no reason"
-        #if DEBUG
-        NSLog("[GeminiLive] WebSocket closed: code=\(code.rawValue), reason=\(reasonStr)")
-        #endif
         Task { @MainActor in
           self.resolveConnect(success: false)
           self.connectionState = .disconnected
@@ -79,9 +66,6 @@ class GeminiLiveService: ObservableObject {
       self.delegate.onError = { [weak self] error in
         guard let self else { return }
         let msg = error?.localizedDescription ?? "Unknown error"
-        #if DEBUG
-        NSLog("[GeminiLive] Session error: \(msg)")
-        #endif
         Task { @MainActor in
           self.resolveConnect(success: false)
           self.connectionState = .error(msg)
@@ -121,12 +105,8 @@ class GeminiLiveService: ObservableObject {
     resolveConnect(success: false)
   }
 
-  private var audioSendCount = 0
-
   func sendAudio(data: Data) {
     guard connectionState == .ready else { return }
-    audioSendCount += 1
-    let count = audioSendCount
     sendQueue.async { [weak self] in
       let base64 = data.base64EncodedString()
       let json: [String: Any] = [
@@ -138,21 +118,14 @@ class GeminiLiveService: ObservableObject {
         ]
       ]
       self?.sendJSON(json)
-      if count <= 5 || count % 50 == 0 {
-        NSLog("[GeminiLive] Sent audio chunk #\(count): \(data.count) bytes")
-      }
     }
   }
 
   func sendVideoFrame(image: UIImage) {
     guard connectionState == .ready else { return }
     sendQueue.async { [weak self] in
-      guard let jpegData = image.jpegData(compressionQuality: GeminiConfig.videoJPEGQuality) else {
-        NSLog("[GeminiLive] Failed to create JPEG from image")
-        return
-      }
+      guard let jpegData = image.jpegData(compressionQuality: GeminiConfig.videoJPEGQuality) else { return }
       let base64 = jpegData.base64EncodedString()
-      NSLog("[GeminiLive] Sending video frame: \(jpegData.count) bytes JPEG")
       let json: [String: Any] = [
         "realtimeInput": [
           "video": [
@@ -201,13 +174,7 @@ class GeminiLiveService: ObservableObject {
           let string = String(data: data, encoding: .utf8) else {
       return
     }
-    webSocketTask?.send(.string(string)) { error in
-      if let error {
-        #if DEBUG
-        NSLog("[GeminiLive] Send error: \(error.localizedDescription)")
-        #endif
-      }
-    }
+    webSocketTask?.send(.string(string)) { _ in }
   }
 
   private func startReceiving() {
@@ -230,9 +197,6 @@ class GeminiLiveService: ObservableObject {
         } catch {
           if !Task.isCancelled {
             let reason = error.localizedDescription
-            #if DEBUG
-            NSLog("[GeminiLive] Receive error: \(reason)")
-            #endif
             await MainActor.run {
               self.resolveConnect(success: false)
               self.connectionState = .disconnected
@@ -252,16 +216,8 @@ class GeminiLiveService: ObservableObject {
       return
     }
 
-    #if DEBUG
-    let keys = json.keys.joined(separator: ", ")
-    NSLog("[GeminiLive] Message keys: \(keys)")
-    #endif
-
     // Setup complete
     if json["setupComplete"] != nil {
-      #if DEBUG
-      NSLog("[GeminiLive] Setup complete - ready for audio/video")
-      #endif
       connectionState = .ready
       resolveConnect(success: true)
       return
@@ -271,9 +227,6 @@ class GeminiLiveService: ObservableObject {
     if let goAway = json["goAway"] as? [String: Any] {
       let timeLeft = goAway["timeLeft"] as? [String: Any]
       let seconds = timeLeft?["seconds"] as? Int ?? 0
-      #if DEBUG
-      NSLog("[GeminiLive] GoAway, time left: \(seconds)s")
-      #endif
       connectionState = .disconnected
       isModelSpeaking = false
       onDisconnected?("Server closing (time left: \(seconds)s)")
@@ -282,15 +235,7 @@ class GeminiLiveService: ObservableObject {
 
     // Server content
     if let serverContent = json["serverContent"] as? [String: Any] {
-      #if DEBUG
-      let scKeys = serverContent.keys.joined(separator: ", ")
-      NSLog("[GeminiLive] serverContent keys: \(scKeys)")
-      #endif
-
       if let interrupted = serverContent["interrupted"] as? Bool, interrupted {
-        #if DEBUG
-        NSLog("[GeminiLive] Model interrupted")
-        #endif
         isModelSpeaking = false
         onInterrupted?()
         return
@@ -298,58 +243,24 @@ class GeminiLiveService: ObservableObject {
 
       if let modelTurn = serverContent["modelTurn"] as? [String: Any],
          let parts = modelTurn["parts"] as? [[String: Any]] {
-        #if DEBUG
-        NSLog("[GeminiLive] modelTurn with \(parts.count) parts")
-        #endif
         for part in parts {
           if let inlineData = part["inlineData"] as? [String: Any],
-             let mimeType = inlineData["mimeType"] as? String {
-            #if DEBUG
-            NSLog("[GeminiLive] Part mimeType: \(mimeType)")
-            #endif
-            if mimeType.hasPrefix("audio/pcm"),
-               let base64Data = inlineData["data"] as? String,
-               let audioData = Data(base64Encoded: base64Data) {
-              #if DEBUG
-              NSLog("[GeminiLive] Audio chunk received: \(audioData.count) bytes")
-              #endif
-              if !isModelSpeaking {
-                isModelSpeaking = true
-              }
-              onAudioReceived?(audioData)
+             let mimeType = inlineData["mimeType"] as? String,
+             mimeType.hasPrefix("audio/pcm"),
+             let base64Data = inlineData["data"] as? String,
+             let audioData = Data(base64Encoded: base64Data) {
+            if !isModelSpeaking {
+              isModelSpeaking = true
             }
-          } else if let text = part["text"] as? String {
-            #if DEBUG
-            NSLog("[GeminiLive] Text part: \(text.prefix(100))")
-            #endif
-          } else {
-            #if DEBUG
-            let partKeys = part.keys.joined(separator: ", ")
-            NSLog("[GeminiLive] Unknown part keys: \(partKeys)")
-            #endif
+            onAudioReceived?(audioData)
           }
         }
       }
 
       if let turnComplete = serverContent["turnComplete"] as? Bool, turnComplete {
-        #if DEBUG
-        NSLog("[GeminiLive] Turn complete")
-        #endif
         isModelSpeaking = false
         onTurnComplete?()
       }
-
-      // Log input/output transcription if present
-      #if DEBUG
-      if let inputTranscription = serverContent["inputTranscription"] as? [String: Any],
-         let text = inputTranscription["text"] as? String {
-        NSLog("[GeminiLive] Input transcription: \(text)")
-      }
-      if let outputTranscription = serverContent["outputTranscription"] as? [String: Any],
-         let text = outputTranscription["text"] as? String {
-        NSLog("[GeminiLive] Output transcription: \(text)")
-      }
-      #endif
     }
   }
 }
