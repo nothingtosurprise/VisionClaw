@@ -96,7 +96,8 @@
 
   <script>
     let ws, pc, localStream;
-    const wsUrl = `ws://${location.hostname}:${location.port || 8080}`;
+    const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${wsProtocol}//${location.host}`;
 
     function joinRoom() {
       const code = document.getElementById('room-input').value.toUpperCase().trim();
