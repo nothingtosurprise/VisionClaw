@@ -1,4 +1,5 @@
 const http = require("http");
+const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const { WebSocketServer } = require("ws");
@@ -6,58 +7,59 @@ const { WebSocketServer } = require("ws");
 const PORT = process.env.PORT || 8080;
 const rooms = new Map(); // roomCode -> { creator: ws, viewer: ws }
 
-// TURN credentials: use Metered.ca (env vars) or fall back to Cloudflare speed test
-const TURN_SERVER = process.env.TURN_SERVER;       // e.g. "a]]].metered.live:443"
-const TURN_USERNAME = process.env.TURN_USERNAME;
-const TURN_CREDENTIAL = process.env.TURN_CREDENTIAL;
+// TURN: use env vars (custom TURN) or Metered Open Relay (free, HMAC auth)
+const TURN_SERVER = process.env.TURN_SERVER;
+const TURN_SECRET = process.env.TURN_SECRET || "openrelayprojectsecret";
 
-let turnCache = { data: null, expires: 0 };
-
-async function fetchTurnCredentials() {
-  if (turnCache.data && Date.now() < turnCache.expires) {
-    return turnCache.data;
-  }
-
-  // Use configured TURN server if env vars are set
-  if (TURN_SERVER && TURN_USERNAME && TURN_CREDENTIAL) {
-    const creds = {
+function generateTurnCredentials() {
+  // Custom TURN server with static credentials
+  if (TURN_SERVER && process.env.TURN_USERNAME && process.env.TURN_CREDENTIAL) {
+    return {
       urls: [
         `stun:${TURN_SERVER}`,
         `turn:${TURN_SERVER}?transport=udp`,
         `turn:${TURN_SERVER}?transport=tcp`,
         `turns:${TURN_SERVER}?transport=tcp`,
       ],
-      username: TURN_USERNAME,
-      credential: TURN_CREDENTIAL,
+      username: process.env.TURN_USERNAME,
+      credential: process.env.TURN_CREDENTIAL,
     };
-    turnCache = { data: creds, expires: Date.now() + 60 * 60 * 1000 };
-    console.log("[TURN] Using configured TURN server:", TURN_SERVER);
-    return creds;
   }
 
-  // Fallback: Cloudflare speed test TURN
-  try {
-    const resp = await fetch("https://speed.cloudflare.com/turn-creds");
-    const creds = await resp.json();
-    turnCache = { data: creds, expires: Date.now() + 20 * 60 * 1000 };
-    console.log("[TURN] Fetched Cloudflare TURN credentials");
-    return creds;
-  } catch (err) {
-    console.log("[TURN] Failed to fetch credentials:", err.message);
-    return null;
-  }
+  // Metered Open Relay with TURN REST API (HMAC-SHA1 time-limited credentials)
+  const ttl = 86400; // 24 hours
+  const expiry = Math.floor(Date.now() / 1000) + ttl;
+  const username = `${expiry}:webrtc`;
+  const hmac = crypto.createHmac("sha1", TURN_SECRET);
+  hmac.update(username);
+  const credential = hmac.digest("base64");
+
+  const server = TURN_SERVER || "staticauth.openrelay.metered.ca";
+  console.log("[TURN] Generated HMAC credentials for", server);
+
+  return {
+    urls: [
+      `stun:${server}:80`,
+      `turn:${server}:80`,
+      `turn:${server}:80?transport=tcp`,
+      `turn:${server}:443`,
+      `turns:${server}:443?transport=tcp`,
+    ],
+    username,
+    credential,
+  };
 }
 
 // HTTP server for serving the web viewer
-const httpServer = http.createServer(async (req, res) => {
+const httpServer = http.createServer((req, res) => {
   // TURN credentials API endpoint
   if (req.url === "/api/turn") {
-    const creds = await fetchTurnCredentials();
+    const creds = generateTurnCredentials();
     res.writeHead(200, {
       "Content-Type": "application/json",
       "Access-Control-Allow-Origin": "*",
     });
-    res.end(JSON.stringify(creds || {}));
+    res.end(JSON.stringify(creds));
     return;
   }
 

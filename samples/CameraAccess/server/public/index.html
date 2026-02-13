@@ -201,6 +201,10 @@
 
       pc.onicecandidate = (e) => {
         if (e.candidate) {
+          const c = e.candidate.candidate;
+          if (c.includes('relay')) console.log('ICE candidate: RELAY (TURN)');
+          else if (c.includes('srflx')) console.log('ICE candidate: STUN');
+          else if (c.includes('host')) console.log('ICE candidate: HOST');
           ws.send(JSON.stringify({
             type: 'candidate',
             candidate: e.candidate.candidate,
@@ -211,6 +215,7 @@
       };
 
       pc.oniceconnectionstatechange = () => {
+        console.log('ICE state:', pc.iceConnectionState);
         switch (pc.iceConnectionState) {
           case 'connected':
           case 'completed':
