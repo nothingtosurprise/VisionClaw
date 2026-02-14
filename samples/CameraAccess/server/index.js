@@ -10,27 +10,25 @@ const rooms = new Map(); // roomCode -> { creator: ws, viewer: ws, destroyTimer:
 // Allows the iOS user to switch apps (e.g. copy room code, send via WhatsApp) and come back.
 const ROOM_GRACE_PERIOD_MS = 60_000;
 
-// TURN: static credentials from free relay services (no API calls needed)
-// Open Relay Project (metered.ca) - 20GB free/month, ports 80/443 for firewall bypass
-// Freestun.net - additional free TURN fallback
+// TURN: ExpressTURN (1000 GB/month free, reliable)
+// Ports 3478 (standard), 80, 443 (firewall bypass)
+const EXPRESSTURN_SERVER = process.env.EXPRESSTURN_SERVER || "free.expressturn.com";
+const EXPRESSTURN_USER = process.env.EXPRESSTURN_USER || "efPU52K4SLOQ34W2QY";
+const EXPRESSTURN_PASS = process.env.EXPRESSTURN_PASS || "1TJPNFxHKXrZfelz";
+
 function getTurnCredentials() {
   return {
     iceServers: [
       {
         urls: [
-          "stun:openrelay.metered.ca:80",
-          "turn:openrelay.metered.ca:80",
-          "turn:openrelay.metered.ca:80?transport=tcp",
-          "turn:openrelay.metered.ca:443",
-          "turns:openrelay.metered.ca:443?transport=tcp",
+          `turn:${EXPRESSTURN_SERVER}:3478`,
+          `turn:${EXPRESSTURN_SERVER}:3478?transport=tcp`,
+          `turn:${EXPRESSTURN_SERVER}:80`,
+          `turn:${EXPRESSTURN_SERVER}:80?transport=tcp`,
+          `turns:${EXPRESSTURN_SERVER}:443?transport=tcp`,
         ],
-        username: "openrelayproject",
-        credential: "openrelayproject",
-      },
-      {
-        urls: ["turn:freestun.net:3478"],
-        username: "free",
-        credential: "free",
+        username: EXPRESSTURN_USER,
+        credential: EXPRESSTURN_PASS,
       },
     ],
   };

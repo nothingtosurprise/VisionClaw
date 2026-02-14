@@ -244,11 +244,15 @@
           });
           console.log('TURN credentials loaded:', JSON.stringify(creds.urls));
         } else if (creds && creds.iceServers) {
-          // Cloudflare sometimes returns {iceServers: [{urls, username, credential}]}
           for (const s of creds.iceServers) {
             iceServers.push({ urls: s.urls, username: s.username, credential: s.credential });
           }
-          console.log('TURN credentials loaded (iceServers format):', creds.iceServers.length, 'servers');
+          // Log each TURN server with credential info for debugging
+          for (const s of creds.iceServers) {
+            const urls = Array.isArray(s.urls) ? s.urls : [s.urls];
+            console.log('TURN server:', urls[0], '| user:', s.username?.substring(0, 8) + '...', '| cred length:', s.credential?.length);
+          }
+          console.log('TURN credentials loaded:', creds.iceServers.length, 'servers');
         } else {
           console.log('TURN response format unexpected:', JSON.stringify(creds));
         }
@@ -288,18 +292,24 @@
         }
       };
 
+      let candidateCounts = { host: 0, srflx: 0, relay: 0 };
       pc.onicecandidate = (e) => {
         if (e.candidate) {
           const c = e.candidate.candidate;
-          if (c.includes('relay')) console.log('ICE candidate: RELAY (TURN)');
-          else if (c.includes('srflx')) console.log('ICE candidate: STUN');
-          else if (c.includes('host')) console.log('ICE candidate: HOST');
+          if (c.includes('relay')) { candidateCounts.relay++; console.log('ICE candidate: RELAY (TURN)', c); }
+          else if (c.includes('srflx')) { candidateCounts.srflx++; console.log('ICE candidate: STUN (srflx)', c); }
+          else if (c.includes('host')) { candidateCounts.host++; }
           ws.send(JSON.stringify({
             type: 'candidate',
             candidate: e.candidate.candidate,
             sdpMid: e.candidate.sdpMid,
             sdpMLineIndex: e.candidate.sdpMLineIndex
           }));
+        } else {
+          console.log('ICE gathering complete. Candidates:', JSON.stringify(candidateCounts));
+          if (candidateCounts.relay === 0 && candidateCounts.srflx === 0) {
+            console.warn('WARNING: No STUN or TURN candidates. TURN credentials may be invalid or network is very restrictive.');
+          }
         }
       };
 
