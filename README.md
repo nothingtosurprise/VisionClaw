@@ -121,15 +121,16 @@ Open `samples/CameraAccessAndroid/` in Android Studio.
 
 The Meta DAT Android SDK is distributed via GitHub Packages. You need a GitHub Personal Access Token with `read:packages` scope.
 
-1. Go to [GitHub > Settings > Developer Settings > Personal Access Tokens](https://github.com/settings/tokens) and create a token with `read:packages` scope
+1. Go to [GitHub > Settings > Developer Settings > Personal Access Tokens](https://github.com/settings/tokens) and create a **classic** token with `read:packages` scope
 2. In `samples/CameraAccessAndroid/local.properties`, add:
 
 ```properties
-gpr.user=YOUR_GITHUB_USERNAME
-gpr.token=YOUR_GITHUB_TOKEN
+github_token=YOUR_GITHUB_TOKEN
 ```
 
 > **Tip:** If you have the `gh` CLI installed, you can run `gh auth token` to get a valid token. Make sure it has `read:packages` scope -- if not, run `gh auth refresh -s read:packages`.
+>
+> **Note:** GitHub Packages requires authentication even for public repositories. The 401 error means your token is missing or invalid.
 
 ### 3. Add your secrets
 
